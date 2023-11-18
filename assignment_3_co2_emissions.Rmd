@@ -1,0 +1,88 @@
+---
+title: "Assignment 3 CO2 Emissions Valuation"
+author: "Hannah Irish, Kristin Art, Lillian Liu, Nadine Snyder"
+date: "2023-11-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+Read in historical emissions data for industrial and transportation emissions
+```{r}
+
+##read in historical data on emissions from CARB
+ghg_historical_ca <- read_csv(here::here("data/arb_ghg_2000-2020.csv")) %>%
+  janitor::clean_names()
+
+##separate transportation
+trans_hist_ghg_ca <- ghg_historical_ca %>%
+  filter(sector == "Transportation")
+
+##separate industrial
+ind_hist_ghg_ca <- ghg_historical_ca %>%
+  filter(sector == "Industrial")
+```
+
+Use linear regression to find the trend of emissions, no intervention
+```{r}
+
+##linear model for transportation
+trans_emissions_lm <- lm(mmt_co23 ~ year, data = trans_hist_ghg_ca)
+
+##extract slope
+trans_coef <- coef(trans_emissions_lm)
+trans_slope <- trans_coef[2] 
+
+##linear model for industrial
+ind_emissions_lm <- lm(mmt_co23 ~ year, data = ind_hist_ghg_ca)
+
+##extract slope
+ind_coef <- coef(ind_emissions_lm)
+ind_slope <- ind_coef[2] 
+
+```
+
+Develop counterfactual emissions
+```{r}
+
+##make vector of years
+year <- seq(2021, 2050)
+
+##make vector for transportation and industrial emissions
+industry <- vector(mode="numeric", length=length(year))
+transportation <- vector(mode="numeric", length=length(year))
+
+##set 2020 value (last value from industry emissions historical data)
+ind_2020 <- tail(ind_hist_ghg_ca$mmt_co23, 1) 
+
+##set 2021 value 
+industry[1] = ind_2020 + ind_slope
+for(i in 2:length(year)){
+  industry[i] = industry[i-1] + ind_slope
+}
+
+##set 2020 value
+trans_2020 <- tail(trans_hist_ghg_ca$mmt_co23, 1) 
+
+
+##set 2021 value
+transportation[1] = trans_2020 + trans_slope
+for(i in 2:length(year)){
+  transportation[i] = transportation[i-1] + trans_slope
+}
+
+##make counterfactual data set
+counterfactual <- data.frame(year, industry, transportation)
+
+##make tidy
+counterfactual_tidy <- pivot_longer(data=counterfactual,  cols=c(2,3), names_to= "sector", values_to = "mmt_co2e")
+```
+
+
+
+
+
+
