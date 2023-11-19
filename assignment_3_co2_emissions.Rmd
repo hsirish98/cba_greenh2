@@ -75,14 +75,148 @@ for(i in 2:length(year)){
 }
 
 ##make counterfactual data set
-counterfactual <- data.frame(year, industry, transportation)
+counterfactual <- data.frame(year, industry, transportation)%>%
+  mutate("industry" = industry*1000, "transportation" = transportation*1000)
 
 ##make tidy
-counterfactual_tidy <- pivot_longer(data=counterfactual,  cols=c(2,3), names_to= "sector", values_to = "mmt_co2e")
+counterfactual_tidy <- pivot_longer(data=counterfactual,  cols=c(2,3), names_to= "sector", values_to = "mt_co2e") 
+  
+
 ```
 
 
+Read in Base Case Buildout Information
+```{r}
+
+##read in Reed paper buildout by year (estimated from graph)
+h2_buildout <- read_csv(here::here("data/H2_from_electrolysis.csv")) %>%
+  select(1,4)
+
+colnames(h2_buildout) = c("year", "no_add")
+
+##lag by 4 years for additionality scenario
+h2_scenarios <- h2_buildout %>%
+  mutate(add = lag(no_add,2))
+
+##add 0 to first two rows of additionality
+h2_scenarios$add[1] = 0
+h2_scenarios$add[2] = 0
+
+h2_scenarios_tidy <- h2_scenarios %>%
+  pivot_longer(cols=c(2,3), names_to = "scenario", values_to = "mt_h2")
+
+```
+
+Read in industry and transportation (non-LDV) percentage values
+
+```{r}
+
+##read in data with the percentage of hydrogen demand attributable to non-LDVs and industry 
+percent_demand <- read_csv(here::here("data/non-LDV_vs_Industry_Demand.csv")) %>%
+  select(c(1,8,9))
+
+```
+
+Final H2 scenarios attributable to each sector
+```{r}
+
+##put in percent data
+percents_df <- merge(percent_demand, h2_scenarios) 
+
+
+##calculate h2 production that will go to each demand type
+final_h2 <- percents_df %>%
+  mutate("no_additionality_trans" = transportation_pct*no_add, "no_additionality_ind" = industry_pct*no_add,
+         "additionality_trans" = transportation_pct*add,
+         "additionality_industry" = industry_pct*add) %>%
+  select(c(1,6,7,8,9))
+
+
+## choose additionality situations
+additionality <- final_h2 %>%
+  select(1, 4,5 ) 
+
+colnames(additionality) =  c("year","transportation", "industry")
+
+##calculate Co2equivalent saved by the hydrogen production for each end use and scenario
+
+##1 kg h2 = 0.9gal diesel. 1 metric ton  1000kg. 1 gal diesel = 10.18*10^-3 CO2 tons so
+#h2mt * 1000kg/mt * 0.9gal diesel/1kg h2 *10*10^-3 co2 kg/1gal diesel * 1ton/1000kg co2
+additionality_co2 <- additionality %>%
+  mutate("transportation" = transportation * 1000 *0.9*10.180 *0.001/1000)%>%
+  ## 1 kg h2 = 0.000117 mcf natural gas *0.0551 ton CO2/1mcf natural gas
+  #h2mt * 1000kg/mt * 0.000117 mcf nat gas/kgh2 * 0.0551 co2 tons/mcf natural gas
+  mutate("industry" = industry *1000*0.000117*0.0551)
+
+additionality_tidy <- additionality_co2 %>%
+  pivot_longer(cols = c(2,3), names_to = "scenario", values_to = "mmt")
+
+
+no_additionality <- final_h2 %>%
+  select(1, 2,3 ) 
+
+colnames(no_additionality) =  c("year","transportation", "industry")
+
+no_additionality_co2 <- no_additionality %>%
+  mutate("transportation" =  transportation * 1000 *0.9*10.180 *0.001/1000)%>%
+  ## 1 kg h2 = 0.000117 mcf natural gas *0.0551 ton CO2/1mcf natural gas
+  #h2mt * 1000kg/mt * 0.000117 mcf nat gas/kgh2 * 0.0551 co2 tons/mcf natural gas
+  mutate("industry" = industry *1000*0.000117*0.0551)
+
+no_additionality_tidy <- no_additionality_co2 %>%
+  pivot_longer(cols = c(2,3), names_to = "scenario", values_to = "mmt")
 
 
 
+```
+
+
+get monetary value (SCC)
+```{r}
+
+##get monetary value by using social cost of carbon
+scc = 185 ##Using scc of 185 (from canvas notes??)
+
+counterfactual_scc <- counterfactual %>%
+  mutate("industry" = industry*185, "transportation" = transportation*185) %>%
+  filter(year>="2023")%>%
+##sum total cost for industry and transportation
+  mutate(total = industry+transportation)
+
+
+##same for additionality and no additionality scenarios
+no_add_scc <- no_additionality_co2 %>%
+  mutate("industry" = industry*185, "transportation" = transportation*185)%>%
+  filter(year>= "2023")%>%
+  mutate(total = industry+transportation)
+
+add_scc <- additionality_co2  %>%
+  mutate("industry" = industry*185, "transportation" = transportation*185) %>%
+  filter(year>= "2023") %>%
+  mutate(total = industry+transportation)
+
+##discount scc
+rho = 1/1.05 ##using dsct value of 5%
+
+##first year is year 1 from now (2024), no year 0
+t = seq(1, nrow(add_scc))
+
+##calculate present value of costs in each scenario
+pv_counterfactual = counterfactual_scc$total*rho^t
+
+pv_additionality = add_scc$total*rho^t
+
+pv_no_additionality = no_add_scc$total*rho^t
+
+
+##sum costs for net present value
+npv_counterfactual = sum(pv_counterfactual)
+npv_additionality = npv_counterfactual - sum(pv_additionality)
+npv_no_additionality = npv_counterfactual -sum(pv_no_additionality)
+
+##look at results
+print(npv_counterfactual)
+print(npv_additionality)
+print(npv_no_additionality)
+```
 
