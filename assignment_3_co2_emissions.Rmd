@@ -1,19 +1,21 @@
 ---
-title: "Assignment 3 CO2 Emissions Valuation"
-author: "Hannah Irish, Kristin Art, Lillian Liu, Nadine Snyder"
-date: "2023-11-18"
-output: html_document
+title: "Assignment 3 CBA, Green Hydrogen"
+author: "Kristin Art, Hannah Irish, Lillian Liu, Nadine Snyder"
+date: "2023-11-19"
+output:
+  html_document:
+    code_folding: hide
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, warning=FALSE, message=FALSE, echo=TRUE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(ggplot2)
 library(forecast)
 ```
 
-Read in historical emissions data for industrial and transportation emissions
-```{r}
+Read in historical emissions data for industrial and transportation emissions:
+```{r, message=FALSE, warning=FALSE}
 
 ##read in historical data on emissions from CARB
 ghg_historical_ca <- read_csv(here::here("data/arb_ghg_2000-2020.csv")) %>%
@@ -51,7 +53,7 @@ ind_slope <- ind_coef[2]
 ```
 
 Develop counterfactual emissions
-```{r}
+```{r, message=FALSE, warning=FALSE}
 ##define lm functions
 calculate_ind_co2e <- function(year){
   co2e = (ind_slope*year + ind_int)*1000 
@@ -74,10 +76,13 @@ counterfactual <- year %>%
 ## pivot longer
 counterfactual_longer <- counterfactual %>% 
   filter(year <= "2050") %>% 
-  pivot_longer(cols = c(2,3), names_to = "sector", values_to = "mt_co2e")
+  mutate(total_emissions = industry+transportation) %>%
+  pivot_longer(cols = c(2,3,4), names_to = "sector", values_to = "mt_co2e") 
+
 
 ##plot to check
-ggplot() + geom_line(data = counterfactual_longer, aes(x = year, y = mt_co2e, col = sector)) 
+ggplot() + geom_line(data = counterfactual_longer, aes(x = year, y = mt_co2e, col = sector))+
+  labs(x="year", y="CO2e (Mt)", title="Counterfactual Emissions with No Hydrogen Intervention")+ theme_minimal()
 ```
 
 
@@ -92,20 +97,23 @@ colnames(h2_buildout) = c("year", "no_add")
 
 ##lag by 4 years for additionality scenario
 h2_scenarios <- h2_buildout %>%
-  mutate(add = lag(no_add,2)) #is this a 2-year lag?
+  mutate(add = lag(no_add,4)) #is this a 2-year lag?
 
 ##add 0 to first two rows of additionality
-h2_scenarios$add[1] = 0
-h2_scenarios$add[2] = 0
+h2_scenarios$add[1:4] = 0
+#h2_scenarios$add[2] = 0
 
 h2_scenarios_tidy <- h2_scenarios %>%
   pivot_longer(cols=c(2,3), names_to = "scenario", values_to = "mt_h2")
+
+ggplot() + geom_line(data = h2_scenarios_tidy, aes(x = year, y = mt_h2, col = scenario))+
+  labs(x="year", y="H2 Produced (kg)", title="Additionality and No Additionality Hydrogen Production Scenarios")+ theme_minimal()
 
 ```
 
 Read in industry and transportation (non-LDV) percentage values
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 
 ##read in data with the percentage of hydrogen demand attributable to non-LDVs and industry 
 percent_demand <- read_csv(here::here("data/non-LDV_vs_Industry_Demand.csv")) %>%
@@ -183,7 +191,7 @@ no_additionality_co2 <- no_additionality_co2 %>%
 ```
 
 
-get monetary value (SCC)
+get monetary value (SCC, Using scc of 185 from RFF and Discount rate of 5% (between 3 and 7, our two reasonable bounds))
 ```{r}
 
 ##get monetary value by using social cost of carbon
@@ -195,9 +203,9 @@ rho = 1/1.05 ##using dsct value of 5%
 ##add column for t and then calculate pv of costs for each scenario
 counterfactual_scc <- counterfactual %>%
   mutate("industry" = industry*185, "transportation" = transportation*185) %>%
-  filter(year %in% c("2024", "2026", "2028", "2030", "2032", "2034", "2036", "2038", "2040", "2042", "2044", "2046", "2048", "2050")) %>% #2023 is timestep 0, 2024 is timestep 1, filter to years that match other dfs
+  filter(year >="2024") %>%
   mutate(total = industry+transportation, ##sum total cost for industry and transportation
-         t = seq(1, 28, 2), #2023 is timestep 0, 2024 is timestep 1
+         t = seq(1, 27), #2023 is timestep 0, 2024 is timestep 1
          pv = (scc*total)/ rho^t) 
 
 
@@ -206,38 +214,34 @@ no_add_scc <- no_additionality_co2 %>%
   mutate("industry" = industry*185, "transportation" = transportation*185)%>%
   filter(year>= "2024") %>%
   mutate(total = industry+transportation,
-         t = seq(1, 28, 2), #since values are for every 2 years, make timesteps same
+         t = seq(1, 27), #since values are for every 2 years, make timesteps same
          pv = (scc*total)/ rho^t)
 
 add_scc <- additionality_co2  %>%
   mutate("industry" = industry*185, "transportation" = transportation*185) %>%
   filter(year >= "2024") %>%
   mutate(total = industry+transportation,
-         t = seq(1, 28, 2), #since values are for every 2 years, make timesteps same
+         t = seq(1, 27), #since values are for every 2 years, make timesteps same
          pv = (scc*total)/ rho^t)
 
-##sum costs for net present value
-# npv_counterfactual = sum(counterfactual_scc$pv)
-# npv_additionality = npv_counterfactual - sum(add_scc$pv) 
-# npv_no_additionality = npv_counterfactual - sum(no_add_scc$pv)
-# 
-# ##look at results
-# print(npv_counterfactual)
-# print(npv_additionality)
-# print(npv_no_additionality)
 
-##kristin's rambling thoughts
-#I added a step that subtracts the saved emissions from h2 from the emissions in the counterfactual to end up with actual emissions under the scenarios. Then, calculated the np cost based on the scc. Results below show that the scenario with h2 and no additionality is the least cost option, although it's pretty dang close to scenario with additionality. Both interventions are ~half the cost of the counterfactual, so woo!
 
 npc_counterfactual = sum(counterfactual_scc$pv)
 npc_additionality = sum(add_scc$pv) 
 npc_no_additionality = sum(no_add_scc$pv)
 
-min(npc_counterfactual,npc_additionality, npc_no_additionality)
-
-print(npc_counterfactual) #max cost
-print(npc_additionality) 
-print(npc_no_additionality) #this is the minimum cost by a slight amount
+# min(npc_counterfactual,npc_additionality, npc_no_additionality)
+# 
+# print(npc_counterfactual) #max cost
+# print(npc_additionality) 
+# print(npc_no_additionality) #this is the minimum cost by a slight amount
 
 ```
+The total costs of CO2 production in the counterfactual/without an H2 intervention is $`r format(npc_counterfactual, scientific=FALSE, big.mark=",")`
 
+The total costs of CO2 production in the additionality intervention scenario is $`r format(npc_additionality, scientific=FALSE, big.mark=",")`
+
+The total costs of CO2 production in the no additionality intervention scenario
+$`r format(npc_no_additionality, scientific=FALSE, big.mark=",")`
+
+The **no additionality** scenario has the smallest net present value, minimizes costs for CO2 emissions as an indicator
