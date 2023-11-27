@@ -245,3 +245,39 @@ The total costs of CO2 production in the no additionality intervention scenario
 $`r format(npc_no_additionality, scientific=FALSE, big.mark=",")`
 
 The **no additionality** scenario has the smallest net present value, minimizes costs for CO2 emissions as an indicator
+
+Partial sensitivity analysis of discount rate, r, on NPV
+```{r}
+#Partial sensitivity analysis where we hold all variables constant except for one, r
+r <- runif(min = 3, max = 7, n = 5000)
+scc <- 185
+avg_total_emissions <- mean(c(sum(add_scc$total),sum(no_add_scc$total), sum(counterfactual$total)))
+t <- seq(1, 27, 1) 
+
+df <- t %>% 
+  as.data.frame() %>% 
+  rename("t" = 1) %>% 
+  mutate(pv = NA)
+
+calculate_npv <- function(scc, total_emissions, r){
+  
+  df$pv <- (scc*total_emissions)/ (r^df$t)
+  
+  npv <- sum(df$pv)
+  
+  return(npv)
+  
+}
+
+npv <- unlist(map(r, calculate_npv, scc = scc, total_emissions = avg_total_emissions))
+results <- cbind(r, npv) %>% 
+  as.data.frame()
+
+ggplot() +
+  geom_line(data = results, aes(x = r, y = npv)) +
+  labs(x = "Discount rate, r", y = "NPV", title = "Partial Sensitivity Analysis")+
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
