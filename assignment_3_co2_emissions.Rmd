@@ -11,21 +11,20 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(ggplot2)
-library(forecast)
 ```
+
 
 Read in historical emissions data for industrial and transportation emissions:
 ```{r, message=FALSE, warning=FALSE}
-
-##read in historical data on emissions from CARB
+## read in historical data on emissions from CARB
 ghg_historical_ca <- read_csv(here::here("data/arb_ghg_2000-2020.csv")) %>%
   janitor::clean_names()
 
-##separate transportation
+## separate transportation
 trans_hist_ghg_ca <- ghg_historical_ca %>%
-  filter(sector == "Transportation") 
+  filter(sector == "Transportation")
 
-##separate industrial
+## separate industrial
 ind_hist_ghg_ca <- ghg_historical_ca %>%
   filter(sector == "Industrial")
 ```
@@ -33,251 +32,235 @@ ind_hist_ghg_ca <- ghg_historical_ca %>%
 
 Use linear regression to find the trend of emissions, no intervention
 ```{r}
+## linear model for transportation
+trans_emissions_lm <- lm(mmt_co23 ~ year, data = trans_hist_ghg_ca)
 
-##linear model for transportation
-trans_emissions_lm <- lm(mmt_co23 ~ year, data = trans_hist_ghg_ca) 
-
-##extract slope
+## extract slope
 trans_coef <- coef(trans_emissions_lm)
-trans_int <- trans_coef[1] 
+trans_int <- trans_coef[1]
 trans_slope <- trans_coef[2]
 
-##linear model for industrial
-ind_emissions_lm <- lm(mmt_co23 ~ year, data = ind_hist_ghg_ca) 
+## linear model for industrial
+ind_emissions_lm <- lm(mmt_co23 ~ year, data = ind_hist_ghg_ca)
 
-##extract slope
+## extract slope
 ind_coef <- coef(ind_emissions_lm)
-ind_int <- ind_coef[1] 
+ind_int <- ind_coef[1]
 ind_slope <- ind_coef[2]
 
+## define lm functions
+calculate_ind_co2e <- function(year) {
+  co2e <- (ind_slope * year + ind_int) * 1000
+}
+
+calculate_trans_co2e <- function(year) {
+  co2e <- (trans_slope * year + trans_int) * 1000
+}
 ```
+
 
 Develop counterfactual emissions
 ```{r, message=FALSE, warning=FALSE}
-##define lm functions
-calculate_ind_co2e <- function(year){
-  co2e = (ind_slope*year + ind_int)*1000 
-}
+## make vector of years
+year <- seq(2021, 2050)
 
-calculate_trans_co2e <- function(year){
-  co2e = (trans_slope*year + trans_int)*1000
-}
-
-##make vector of years
-year <- seq(2021, 2050) 
-
-##turn into df and add columns for transportation and industrial emissions
-counterfactual <- year %>% 
-  as.data.frame() %>% 
-  rename("year" = 1) %>% 
-  mutate(transportation = calculate_trans_co2e(year),
-         industry = calculate_ind_co2e(year))
+## turn into df and add columns for transportation and industrial emissions
+counterfactual <- year %>%
+  as.data.frame() %>%
+  rename("year" = 1) %>%
+  mutate(
+    transportation = calculate_trans_co2e(year),
+    industry = calculate_ind_co2e(year)
+  )
 
 ## pivot longer
-counterfactual_longer <- counterfactual %>% 
-  filter(year <= "2050") %>% 
-  mutate(total_emissions = industry+transportation) %>%
-  pivot_longer(cols = c(2,3,4), names_to = "sector", values_to = "mt_co2e") 
+counterfactual_longer <- counterfactual %>%
+  filter(year <= "2050") %>%
+  mutate(total_emissions = industry + transportation) %>%
+  pivot_longer(cols = c(2, 3, 4), names_to = "sector", values_to = "mt_co2e")
 
-
-##plot to check
-ggplot() + geom_line(data = counterfactual_longer, aes(x = year, y = mt_co2e, col = sector))+
-  labs(x="year", y="CO2e (Mt)", title="Counterfactual Emissions with No Hydrogen Intervention")+ theme_minimal()
+## plot to check
+ggplot() +
+  geom_line(data = counterfactual_longer, aes(x = year, y = mt_co2e, col = sector)) +
+  labs(x = "year", y = "CO2e (Mt)", title = "Counterfactual Emissions with No Hydrogen Intervention") +
+  theme_minimal()
 ```
 
 
 Read in Base Case Buildout Information
 ```{r}
-
-##read in Reed paper buildout by year (estimated from graph)
+## read in Reed paper buildout by year (estimated from graph)
 h2_buildout <- read_csv(here::here("data/H2_from_electrolysis.csv")) %>%
-  select(1,4)
+  select(1, 4)
 
-colnames(h2_buildout) = c("year", "no_add")
+colnames(h2_buildout) <- c("year", "no_add")
 
-##lag by 4 years for additionality scenario
+## lag by 4 years for additionality scenario
 h2_scenarios <- h2_buildout %>%
-  mutate(add = lag(no_add,4)) #is this a 2-year lag?
+  mutate(add = lag(no_add, 4)) # is this a 2-year lag?
 
-##add 0 to first two rows of additionality
-h2_scenarios$add[1:4] = 0
-#h2_scenarios$add[2] = 0
+## add 0 to first two rows of additionality
+h2_scenarios$add[1:4] <- 0
+# h2_scenarios$add[2] = 0
 
 h2_scenarios_tidy <- h2_scenarios %>%
-  pivot_longer(cols=c(2,3), names_to = "scenario", values_to = "mt_h2")
+  pivot_longer(cols = c(2, 3), names_to = "scenario", values_to = "mt_h2")
 
-ggplot() + geom_line(data = h2_scenarios_tidy, aes(x = year, y = mt_h2, col = scenario))+
-  labs(x="year", y="H2 Produced (kg)", title="Additionality and No Additionality Hydrogen Production Scenarios")+ theme_minimal()
-
+ggplot() +
+  geom_line(data = h2_scenarios_tidy, aes(x = year, y = mt_h2, col = scenario)) +
+  labs(x = "year", y = "H2 Produced (kg)", title = "Additionality and No Additionality Hydrogen Production Scenarios") +
+  theme_minimal()
 ```
+
 
 Read in industry and transportation (non-LDV) percentage values
-
 ```{r, message=FALSE, warning=FALSE}
-
-##read in data with the percentage of hydrogen demand attributable to non-LDVs and industry 
+## read in data with the percentage of hydrogen demand attributable to non-LDVs and industry
 percent_demand <- read_csv(here::here("data/non-LDV_vs_Industry_Demand.csv")) %>%
-  select(c(1,8,9))
+  select(c(1, 8, 9))
 
-```
+## add percent data
+percents_df <- merge(percent_demand, h2_scenarios)
 
-Final H2 scenarios attributable to each sector
-```{r}
-
-##put in percent data
-percents_df <- merge(percent_demand, h2_scenarios) 
-
-
-##calculate h2 production that will go to each demand type
+## calculate h2 production that will go to each demand type
 final_h2 <- percents_df %>%
-  mutate("no_additionality_trans" = transportation_pct*no_add, 
-         "no_additionality_ind" = industry_pct*no_add,
-         "additionality_trans" = transportation_pct*add,
-         "additionality_industry" = industry_pct*add) %>%
-  select(c(1,6,7,8,9))
-
+  mutate(
+    "no_additionality_trans" = transportation_pct * no_add,
+    "no_additionality_ind" = industry_pct * no_add,
+    "additionality_trans" = transportation_pct * add,
+    "additionality_industry" = industry_pct * add
+  ) %>%
+  select(c(1, 6, 7, 8, 9))
 
 ## choose additionality situations
 additionality <- final_h2 %>%
-  select(1, 4,5 ) 
+  select(1, 4, 5)
+colnames(additionality) <- c("year", "transportation", "industry")
 
-colnames(additionality) =  c("year","transportation", "industry")
-
-##calculate Co2equivalent saved by the hydrogen production for each end use and scenario
-
-##1 kg h2 = 0.9gal diesel. 1 metric ton  1000kg. 1 gal diesel = 10.18*10^-3 CO2 tons so
-#h2mt * 1000kg/mt * 0.9gal diesel/1kg h2 *10*10^-3 co2 kg/1gal diesel * 1ton/1000kg co2
-additionality_co2 <- additionality %>%
-  mutate("transportation" = transportation * 1000 *0.9*10.180 *0.001/1000)%>%
-  ## 1 kg h2 = 0.000117 mcf natural gas *0.0551 ton CO2/1mcf natural gas
-  #h2mt * 1000kg/mt * 0.000117 mcf nat gas/kgh2 * 0.0551 co2 tons/mcf natural gas
-  mutate("industry" = industry *1000*0.000117*0.0551)
-
-# additionality_tidy <- additionality_co2 %>%
-#   pivot_longer(cols = c(2,3), names_to = "scenario", values_to = "mmt")
-
-## subtract the saved emissions from the counterfactual scenario
-additionality_co2 <- additionality_co2 %>% 
-  left_join(counterfactual, by = "year") %>% 
-  mutate(transportation = transportation.y - transportation.x,
-         industry = industry.y - industry.x) %>% #calculate remaining emissions from counterfactual - saved emissions for additionality scenario
-  select(year, transportation, industry)
-
-
-## choose non=additionality situations
+## choose non-additionality situations
 no_additionality <- final_h2 %>%
-  select(1, 2,3 ) 
+  select(1, 2, 3)
 
-colnames(no_additionality) =  c("year","transportation", "industry")
+colnames(no_additionality) <- c("year", "transportation", "industry")
+```
 
-##calculate Co2equivalent saved by the hydrogen production for each end use and scenario
+
+Find amount of CO2 emissions reduction saved by final H2 scenarios and sectors
+```{r}
+## for transportation:
+## 1 kg h2 = 0.9gal diesel. 1 metric ton  1000kg. 1 gal diesel = 10.18*10^-3 CO2 tons so
+# h2mt * 1000kg/mt * 0.9gal diesel/1kg h2 *10*10^-3 co2 kg/1gal diesel * 1ton/1000kg co2
+
+## for industry:
+## 1 kg h2 = 0.000117 mcf natural gas *0.0551 ton CO2/1mcf natural gas
+# h2mt * 1000kg/mt * 0.000117 mcf nat gas/kgh2 * 0.0551 co2 tons/mcf natural gas
+
+## calculate co2 saved (emission reductions) from fuel displacement by hydrogen for additionality scenario
+additionality_co2 <- additionality %>%
+  mutate("transportation" = transportation * 1000 * 0.9 * 10.180 * 0.001 / 1000) %>%
+  mutate("industry" = industry * 1000 * 0.000117 * 0.0551)
+
+## calculate co2 saved (emission reductions) from fuel displacement by hydrogen for non-additionality scenario
 no_additionality_co2 <- no_additionality %>%
-  mutate("transportation" =  transportation * 1000 *0.9*10.180 *0.001/1000)%>%
-  ## 1 kg h2 = 0.000117 mcf natural gas *0.0551 ton CO2/1mcf natural gas
-  #h2mt * 1000kg/mt * 0.000117 mcf nat gas/kgh2 * 0.0551 co2 tons/mcf natural gas
-  mutate("industry" = industry *1000*0.000117*0.0551)
-
-# no_additionality_tidy <- no_additionality_co2 %>%
-#   pivot_longer(cols = c(2,3), names_to = "scenario", values_to = "mmt")
-
-## subtract the saved emissions from the counterfactual scenario
-no_additionality_co2 <- no_additionality_co2 %>% 
-  left_join(counterfactual, by = "year") %>% 
-  mutate(transportation = transportation.y - transportation.x,
-         industry = industry.y - industry.x) %>% #calculate remaining emissions from counterfactual - saved emissions for additionality scenario
-  select(year, transportation, industry)
-
-
+  mutate("transportation" = transportation * 1000 * 0.9 * 10.180 * 0.001 / 1000) %>%
+  mutate("industry" = industry * 1000 * 0.000117 * 0.0551)
 ```
 
 
-get monetary value (SCC, Using scc of 185 from RFF and Discount rate of 5% (between 3 and 7, our two reasonable bounds))
+Calculate NPV of emissions reductions for each scenario using benefits transfer
+
+We used the social cost of carbon (SCC) from RFF, which was calculated as:
+$$SCC = \sum_{n=1}^{t} \frac{damage}{1 + r^t} = \frac{185 USD}{1 ton C}$$
+where: 
+
+- time, t = 400 years
+
+- discount rate, r = 2%
+
+When we rearrange their equation to solve for damage, we found that damage = $3.77 in 2020 USD.
+
+Using the CPI, we found that damage = $4.48 in 2023 USD, which we use in our valuation of the emissions reductions.
+
+We also assume a discount rate, r, of 5%, which is the average discount rate based on the literature. 
+
 ```{r}
+## define scc
+scc_2023 <- 4.48
 
-##get monetary value by using social cost of carbon
-scc = 185 ##Using scc of 185 from RFF (based on Costello's recommendation)
+## define discount rate
+rho <- 0.05 ## using dsct value of 5%
 
-##discount value
-rho = 1/1.05 ##using dsct value of 5%
-
-##add column for t and then calculate pv of costs for each scenario
-counterfactual_scc <- counterfactual %>%
-  mutate("industry" = industry*185, "transportation" = transportation*185) %>%
-  filter(year >="2024") %>%
-  mutate(total = industry+transportation, ##sum total cost for industry and transportation
-         t = seq(1, 27), #2023 is timestep 0, 2024 is timestep 1
-         pv = (scc*total)/ rho^t) 
-
-
-##same for additionality and no additionality scenarios
+# calculate the pv of the co2 reductions under each scenario
 no_add_scc <- no_additionality_co2 %>%
-  mutate("industry" = industry*185, "transportation" = transportation*185)%>%
-  filter(year>= "2024") %>%
-  mutate(total = industry+transportation,
-         t = seq(1, 27), #since values are for every 2 years, make timesteps same
-         pv = (scc*total)/ rho^t)
-
-add_scc <- additionality_co2  %>%
-  mutate("industry" = industry*185, "transportation" = transportation*185) %>%
+  mutate("industry" = industry * 185, "transportation" = transportation * 185) %>%
   filter(year >= "2024") %>%
-  mutate(total = industry+transportation,
-         t = seq(1, 27), #since values are for every 2 years, make timesteps same
-         pv = (scc*total)/ rho^t)
+  mutate(
+    total = industry + transportation,
+    t = seq(1, 27), # since values are for every 2 years, make timesteps same
+    pv = (scc_2023 * total) /((1 + rho)^t)
+  )
 
+add_scc <- additionality_co2 %>%
+  mutate("industry" = industry * 185, "transportation" = transportation * 185) %>%
+  filter(year >= "2024") %>%
+  mutate(
+    total = industry + transportation,
+    t = seq(1, 27), # since values are for every 2 years, make timesteps same
+    pv = (scc_2023 * total) /((1 + rho)^t)
+  )
 
-
-npc_counterfactual = sum(counterfactual_scc$pv)
-npc_additionality = sum(add_scc$pv) 
-npc_no_additionality = sum(no_add_scc$pv)
-
-# min(npc_counterfactual,npc_additionality, npc_no_additionality)
-# 
-# print(npc_counterfactual) #max cost
-# print(npc_additionality) 
-# print(npc_no_additionality) #this is the minimum cost by a slight amount
-
+# sum the pvs to get npv
+npv_additionality <- sum(add_scc$pv)
+npv_no_additionality <- sum(no_add_scc$pv)
 ```
-The total costs of CO2 production in the counterfactual/without an H2 intervention is $`r format(npc_counterfactual, scientific=FALSE, big.mark=",")`
+The total net present value of the $CO_2$ emissions reductions under the additionality intervention scenario is $`r format(npv_additionality, scientific=FALSE, big.mark=",")`
 
-The total costs of CO2 production in the additionality intervention scenario is $`r format(npc_additionality, scientific=FALSE, big.mark=",")`
+The total net present value of the $CO_2$ emissions reductions under the no additionality intervention scenario is $`r format(npv_no_additionality, scientific=FALSE, big.mark=",")`
 
-The total costs of CO2 production in the no additionality intervention scenario
-$`r format(npc_no_additionality, scientific=FALSE, big.mark=",")`
+The **no additionality** scenario has the larger net present value based on the $CO_2$ emissions reductions indicator, which was valuated using a benefit transfer. 
 
-The **no additionality** scenario has the smallest net present value, minimizes costs for CO2 emissions as an indicator
 
-Partial sensitivity analysis of discount rate, r, on NPV
+Partial sensitivity analysis of NPV's sensitivity to discount rate, r
 ```{r}
-#Partial sensitivity analysis where we hold all variables constant except for one, r
-r <- runif(min = 3, max = 7, n = 5000)
-scc <- 185
-avg_total_emissions <- mean(c(sum(add_scc$total),sum(no_add_scc$total), sum(counterfactual$total)))
-t <- seq(1, 27, 1) 
+# Partial sensitivity analysis where we hold all variables constant except for one, r
+# define vector of r values
+r <- runif(min = 0.03, max = 0.07, n = 5000)
 
-df <- t %>% 
-  as.data.frame() %>% 
-  rename("t" = 1) %>% 
+# define constant inputs
+scc_2023 <- 4.48
+avg_total_emissions_reductions <- mean(c(sum(add_scc$total), sum(no_add_scc$total)))
+t <- seq(1, 27, 1)
+
+# define df with empty column for pv
+df <- t %>%
+  as.data.frame() %>%
+  rename("t" = 1) %>%
   mutate(pv = NA)
 
-calculate_npv <- function(scc, total_emissions, r){
-  
-  df$pv <- (scc*total_emissions)/ (r^df$t)
-  
+calculate_npv <- function(scc, emissions, r) {
+  # calculate pv of emisison reductions
+  df$pv <- (scc * emissions) / ((1 + r)^df$t)
+
+  # sum pvs to get npv
   npv <- sum(df$pv)
-  
+
   return(npv)
-  
 }
 
-npv <- unlist(map(r, calculate_npv, scc = scc, total_emissions = avg_total_emissions))
-results <- cbind(r, npv) %>% 
+# save results
+npv <- unlist(map(r, calculate_npv, scc = scc_2023, emissions = avg_total_emissions_reductions))
+results <- cbind(r, npv) %>%
   as.data.frame()
 
+#calculate NPV from our chosen r value (5%) for comparison plot
+npv_chosenr <- calculate_npv(r = 0.05, scc = scc_2023, emissions = avg_total_emissions_reductions)
+
+# plot results
 ggplot() +
-  geom_line(data = results, aes(x = r, y = npv)) +
-  labs(x = "Discount rate, r", y = "NPV", title = "Partial Sensitivity Analysis")+
+  geom_line(data = results, aes(x = r, y = npv/1000000), size = 1) +
+  geom_hline(yintercept = npv_chosenr/1000000, linetype = "dashed", color = "red") +
+  labs(x = "Discount rate, r", y = "NPV ($M)", title = "Partial Sensitivity Analysis") +
   theme_minimal() +
-  theme(plot.title = element_text(hjust = 0.5))
-
-
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position = "right")
 ```
