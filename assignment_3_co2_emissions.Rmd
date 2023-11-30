@@ -203,22 +203,21 @@ for(i in 1:27){
 scc_original = sum(present_value)
 
 
+
 # calculate the pv of the co2 reductions under each scenario
 no_add_scc <- no_additionality_co2 %>%
-  filter(year >= "2024") %>%
-   mutate("counterfactual_emissions" = counterfactual$total) %>%
+  filter(year >= "2024")%>%
   mutate(
-    total_reduction = counterfactual_emissions- total,
+    total_reduction = total,
     t = seq(1, 27), 
     pv = (total_reduction*scc_original) /((1 + rho)^t)
   )
 
 add_scc <- additionality_co2 %>%
    mutate("industry" = industry, "transportation" = transportation) %>%
-   filter(year >= "2024") %>%
-   mutate("counterfactual_emissions" = counterfactual$total) %>%
+ filter(year >= "2024")%>%
   mutate(
-    total_reduction = counterfactual_emissions- total,
+    total_reduction = total,
     t = seq(1, 27), 
     pv = (total_reduction*scc_original) /((1 + rho)^t)
   )
