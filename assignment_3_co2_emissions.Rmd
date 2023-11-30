@@ -315,7 +315,7 @@ npv_chosenr_no_add <- calculate_npv_no_additionality(r = 0.05, scc = scc_2023)
 ggplot() +
   geom_line(data = r_scc_df_add/1000000, aes(x = r, y = npv), size = 1) +
   geom_hline(yintercept = npv_chosenr_add/1000000, linetype = "dashed", color = "red") +
-  labs(x = "Discount rate, r", y = "NPV ($M)", title = "Partial Sensitivity Analysis Additioality Scenario") +
+  labs(x = "Discount rate, r", y = "NPV ($M)", title = "Partial Sensitivity Analysis Additionality Scenario") +
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5), 
         legend.position = "right")
