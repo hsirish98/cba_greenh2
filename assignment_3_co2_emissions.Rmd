@@ -228,12 +228,12 @@ r <- runif(min = 0.03, max = 0.07, n = 5000)
 
 # define constant inputs
 
-
 damages_2023 <- 4.40 ##3.7 damages in 2020 per RFF means 4.4 in 2023
 
 
 scc_gen <- function(discount_rate){
   present_value = vector(mode="numeric", length =0)
+  
   for (i in 1:27){
     present_value[i] = damages_2023/(1+discount_rate)^i
   }
@@ -242,11 +242,10 @@ scc_gen <- function(discount_rate){
   return(npv)
 }
 
-
 r_df <- data.frame(dsct = r)
 
 r_scc_df <- r_df %>%
-  mutate(scc_2023 = scc_gen(dsct))
+  mutate(scc_2023 = map(dsct, scc_gen))
 
 
 avg_total_emissions_reductions <- mean(c(sum(add_scc$total), sum(no_add_scc$total)))
