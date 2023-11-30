@@ -11,6 +11,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(ggplot2)
+library(purrr)
 ```
 
 
@@ -70,8 +71,10 @@ counterfactual <- year %>%
   rename("year" = 1) %>%
   mutate(
     transportation = calculate_trans_co2e(year),
-    industry = calculate_ind_co2e(year)
-  )
+    industry = calculate_ind_co2e(year),
+    total= transportation+industry
+  ) %>%
+  filter(year >= 2024)
 
 ## pivot longer
 counterfactual_longer <- counterfactual %>%
@@ -158,12 +161,14 @@ Find amount of CO2 emissions reduction saved by final H2 scenarios and sectors
 ## calculate co2 saved (emission reductions) from fuel displacement by hydrogen for additionality scenario
 additionality_co2 <- additionality %>%
   mutate("transportation" = transportation * 1000 * 0.9 * 10.180 * 0.001 / 1000) %>%
-  mutate("industry" = industry * 1000 * 0.000117 * 0.0551)
+  mutate("industry" = industry * 1000 * 0.000117 * 0.0551) %>%
+  mutate("total" = industry+transportation)
 
 ## calculate co2 saved (emission reductions) from fuel displacement by hydrogen for non-additionality scenario
 no_additionality_co2 <- no_additionality %>%
   mutate("transportation" = transportation * 1000 * 0.9 * 10.180 * 0.001 / 1000) %>%
-  mutate("industry" = industry * 1000 * 0.000117 * 0.0551)
+  mutate("industry" = industry * 1000 * 0.000117 * 0.0551) %>%
+  mutate("total" = industry+transportation)
 ```
 
 
@@ -179,34 +184,43 @@ where:
 
 When we rearrange their equation to solve for damage, we found that damage = $3.77 in 2020 USD.
 
-Using the CPI, we found that damage = $4.48 in 2023 USD, which we use in our valuation of the emissions reductions.
+Using the CPI, we found that damage = $4.480 in 2023 USD, which we use in our valuation of the emissions reductions.
 
 We also assume a discount rate, r, of 5%, which is the average discount rate based on the literature. 
 
 ```{r}
 ## define scc
-scc_2023 <- 4.48
+damages <- 4.40
 
 ## define discount rate
 rho <- 0.05 ## using dsct value of 5%
 
+present_value = vector(mode="numeric", length=0)
+for(i in 1:27){
+  present_value[i] = damages/(1+rho)^i
+}
+
+scc_original = sum(present_value)
+
+
 # calculate the pv of the co2 reductions under each scenario
 no_add_scc <- no_additionality_co2 %>%
-  mutate("industry" = industry * 185, "transportation" = transportation * 185) %>%
   filter(year >= "2024") %>%
+   mutate("counterfactual_emissions" = counterfactual$total) %>%
   mutate(
-    total = industry + transportation,
-    t = seq(1, 27), # since values are for every 2 years, make timesteps same
-    pv = (scc_2023 * total) /((1 + rho)^t)
+    total_reduction = counterfactual_emissions- total,
+    t = seq(1, 27), 
+    pv = (total_reduction*scc_original) /((1 + rho)^t)
   )
 
 add_scc <- additionality_co2 %>%
-  mutate("industry" = industry * 185, "transportation" = transportation * 185) %>%
-  filter(year >= "2024") %>%
+   mutate("industry" = industry, "transportation" = transportation) %>%
+   filter(year >= "2024") %>%
+   mutate("counterfactual_emissions" = counterfactual$total) %>%
   mutate(
-    total = industry + transportation,
-    t = seq(1, 27), # since values are for every 2 years, make timesteps same
-    pv = (scc_2023 * total) /((1 + rho)^t)
+    total_reduction = counterfactual_emissions- total,
+    t = seq(1, 27), 
+    pv = (total_reduction*scc_original) /((1 + rho)^t)
   )
 
 # sum the pvs to get npv
@@ -245,10 +259,10 @@ scc_gen <- function(discount_rate){
 r_df <- data.frame(dsct = r)
 
 r_scc_df <- r_df %>%
-  mutate(scc_2023 = map(dsct, scc_gen))
+  mutate(scc_2023 = map_dbl(dsct, scc_gen))
 
+#avg_total_emissions_reductions<- mean(c(sum(add_scc$total), sum(no_add_scc$total)))
 
-avg_total_emissions_reductions <- mean(c(sum(add_scc$total), sum(no_add_scc$total)))
 t <- seq(1, 27, 1)
 
 # define df with empty column for pv
@@ -257,34 +271,63 @@ df <- t %>%
   rename("t" = 1) %>%
   mutate(pv = NA)
 
-calculate_npv <- function(scc, emissions, r) {
+
+additionality_co2_vec <- add_scc$total_reduction
+
+calculate_npv_additionality <- function(scc, r) {
   # calculate pv of emisison reductions
-  df$pv <- (scc * emissions) / ((1 + r)^df$t)
-
-  # sum pvs to get npv
-  npv <- sum(df$pv)
-
-  return(npv)
+  value = vector(mode="numeric", length=0)
+  for(i in 1:27){
+    value[i] = (additionality_co2_vec[i]*scc)/(1+r)^i
+  }
+  return(sum(value))
 }
 
-r_scc_df <- r_scc_df %>%
-  mutate(npv = calculate_npv(scc_2023, avg_total_emissions_reductions, r))
+  
+no_additionality_co2_vec <- no_add_scc$total_reduction
+
+calculate_npv_no_additionality <- function(scc, r) {
+  # calculate pv of emisison reductions
+  value = vector(mode="numeric", length=0)
+  for(i in 1:27){
+    value[i] = (no_additionality_co2_vec[i]*scc)/(1+r)^i
+  }
+  return(sum(value))
+}
   
 
-# save results
-npv <- unlist(map(r, calculate_npv, r_scc_df$scc_2023, emissions = avg_total_emissions_reductions))
-results <- cbind(r, npv) %>%
-  as.data.frame()
+
+r_scc_df_add <- r_scc_df %>%
+  mutate(npv = map2_dbl(scc_2023, dsct, calculate_npv_additionality))
+
+r_scc_df_no_add <- r_scc_df %>%
+  mutate(npv = map2_dbl(scc_2023, dsct, calculate_npv_no_additionality))
+
+
+
+scc_2023 = scc_gen(0.05)
 
 #calculate NPV from our chosen r value (5%) for comparison plot
-npv_chosenr <- calculate_npv(r = 0.05, scc = scc_2023, emissions = avg_total_emissions_reductions)
+npv_chosenr_add <- calculate_npv_additionality(r = 0.05, scc = scc_2023)
 
-# plot results
+npv_chosenr_no_add <- calculate_npv_no_additionality(r = 0.05, scc = scc_2023)
+
+# plot results additionality
 ggplot() +
-  geom_line(data = results, aes(x = r, y = npv/1000000), size = 1) +
-  geom_hline(yintercept = npv_chosenr/1000000, linetype = "dashed", color = "red") +
-  labs(x = "Discount rate, r", y = "NPV ($M)", title = "Partial Sensitivity Analysis") +
+  geom_line(data = r_scc_df_add/1000000, aes(x = r, y = npv), size = 1) +
+  geom_hline(yintercept = npv_chosenr_add/1000000, linetype = "dashed", color = "red") +
+  labs(x = "Discount rate, r", y = "NPV ($M)", title = "Partial Sensitivity Analysis Additioality Scenario") +
   theme_minimal() +
   theme(plot.title = element_text(hjust = 0.5), 
         legend.position = "right")
+
+# plot results no additionality
+ggplot() +
+  geom_line(data = r_scc_df_no_add/1000000, aes(x = r, y = npv), size = 1) +
+  geom_hline(yintercept = npv_chosenr_no_add/1000000, linetype = "dashed", color = "red") +
+  labs(x = "Discount rate, r", y = "NPV ($M)", title = "Partial Sensitivity Analysis No Additionality Scenario") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position = "right") + scale_x_continuous()
+
 ```
