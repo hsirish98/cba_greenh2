@@ -227,7 +227,28 @@ Partial sensitivity analysis of NPV's sensitivity to discount rate, r
 r <- runif(min = 0.03, max = 0.07, n = 5000)
 
 # define constant inputs
-scc_2023 <- 4.48
+
+
+damages_2023 <- 4.40 ##3.7 damages in 2020 per RFF means 4.4 in 2023
+
+
+scc_gen <- function(discount_rate){
+  present_value = vector(mode="numeric", length =0)
+  for (i in 1:27){
+    present_value[i] = damages_2023/(1+discount_rate)^i
+  }
+  
+  npv=sum(present_value)
+  return(npv)
+}
+
+
+r_df <- data.frame(dsct = r)
+
+r_scc_df <- r_df %>%
+  mutate(scc_2023 = scc_gen(dsct))
+
+
 avg_total_emissions_reductions <- mean(c(sum(add_scc$total), sum(no_add_scc$total)))
 t <- seq(1, 27, 1)
 
@@ -247,8 +268,12 @@ calculate_npv <- function(scc, emissions, r) {
   return(npv)
 }
 
+r_scc_df <- r_scc_df %>%
+  mutate(npv = calculate_npv(scc_2023, avg_total_emissions_reductions, r))
+  
+
 # save results
-npv <- unlist(map(r, calculate_npv, scc = scc_2023, emissions = avg_total_emissions_reductions))
+npv <- unlist(map(r, calculate_npv, r_scc_df$scc_2023, emissions = avg_total_emissions_reductions))
 results <- cbind(r, npv) %>%
   as.data.frame()
 
